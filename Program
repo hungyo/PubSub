@@ -1,0 +1,388 @@
+package net.floodlightcontroller.pub_sub;
+
+
+import java.io.IOException;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+
+import org.openflow.protocol.OFFlowMod;
+import org.openflow.protocol.OFMatch;
+import org.openflow.protocol.OFMessage;
+import org.openflow.protocol.OFPacketIn;
+import org.openflow.protocol.OFPacketOut;
+import org.openflow.protocol.OFPort;
+import org.openflow.protocol.OFType;
+import org.openflow.protocol.action.OFAction;
+import org.openflow.protocol.action.OFActionDataLayerDestination;
+import org.openflow.protocol.action.OFActionNetworkLayerDestination;
+import org.openflow.protocol.action.OFActionOutput;
+
+import net.floodlightcontroller.core.FloodlightContext;
+import net.floodlightcontroller.core.IOFMessageListener;
+import net.floodlightcontroller.core.IOFSwitch;
+import net.floodlightcontroller.core.module.FloodlightModuleContext;
+import net.floodlightcontroller.core.module.FloodlightModuleException;
+import net.floodlightcontroller.core.module.IFloodlightModule;
+import net.floodlightcontroller.core.module.IFloodlightService;
+
+import net.floodlightcontroller.core.IFloodlightProviderService;
+
+import java.util.ArrayList;
+import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.Set;
+
+import net.floodlightcontroller.packet.ARP;
+import net.floodlightcontroller.packet.Data;
+import net.floodlightcontroller.packet.Ethernet;
+import net.floodlightcontroller.packet.IPacket;
+import net.floodlightcontroller.packet.IPv4;
+import net.floodlightcontroller.packet.TCP;
+
+//import org.openflow.util.HexString;
+//import org.restlet.resource.ClientResource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class PubSub implements IOFMessageListener, IFloodlightModule {
+	
+	protected IFloodlightProviderService floodlightProvider;
+	protected Set<Long> macAddresses;
+	protected static Logger logger;
+    public static int z=0;
+	
+    private final static int LOAD_BALANCER_IP = IPv4.toIPv4Address("10.0.0.1");
+	private final static byte[] LOAD_BALANCER_MAC = Ethernet.toMACAddress("00:00:00:00:00:01");
+    
+    private static class Publisher
+	{
+		private int ip;
+		private byte[] mac;
+		private short port;
+		
+		public Publisher(String ip, String mac, short port) {
+			this.ip = IPv4.toIPv4Address(ip);
+			this.mac = Ethernet.toMACAddress(mac);
+			this.port = port;
+		}
+		
+		public byte[] getMAC() {
+			return this.mac;
+		}
+		
+		public short getPort() {
+			return this.port;
+		}	
+	}
+	
+	// TODO Create list of servers to which traffic should be balanced
+	final static Publisher[] PUB = {
+		new Publisher("10.0.0.1", "00:00:00:00:00:01", (short)1),
+		new Publisher("10.0.0.2", "00:00:00:00:00:02", (short)2),
+		new Publisher("10.0.0.3", "00:00:00:00:00:03", (short)3),
+		new Publisher("10.0.0.4", "00:00:00:00:00:04", (short)4),
+		new Publisher("10.0.0.5", "00:00:00:00:00:05", (short)5),
+		new Publisher("10.0.0.6", "00:00:00:00:00:06", (short)6),
+		new Publisher("10.0.0.7", "00:00:00:00:00:07", (short)7),
+		new Publisher("10.0.0.8", "00:00:00:00:00:08", (short)8),
+	};
+    
+	int lastServer=0;
+    
+	@Override
+	public String getName() {
+		return "Publishers-Subscribers";
+	}
+
+	@Override
+	public boolean isCallbackOrderingPrereq(OFType type, String name) {
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public boolean isCallbackOrderingPostreq(OFType type, String name) {
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public Collection<Class<? extends IFloodlightService>> getModuleServices() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Map<Class<? extends IFloodlightService>, IFloodlightService> getServiceImpls() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Collection<Class<? extends IFloodlightService>> getModuleDependencies() {
+		Collection<Class<? extends IFloodlightService>> l =
+				new ArrayList<Class<? extends IFloodlightService>>();
+		l.add(IFloodlightProviderService.class);
+		return l;
+	}
+
+	@Override
+	public void init(FloodlightModuleContext context)
+			throws FloodlightModuleException {
+		floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
+	    macAddresses = new ConcurrentSkipListSet<Long>();
+	    logger = LoggerFactory.getLogger(PubSub.class);
+
+	}
+
+	@Override
+	public void startUp(FloodlightModuleContext context) {
+		floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
+
+	}
+
+	@Override
+	public net.floodlightcontroller.core.IListener.Command receive(
+			IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
+		 Ethernet eth =
+	                IFloodlightProviderService.bcStore.get(cntx,
+	                		IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
+		 
+		 
+		 OFPacketIn pin = (OFPacketIn) msg;
+		 OFMatch match = new OFMatch();	
+		 
+		 if (match.getDataLayerType() == Ethernet.TYPE_ARP) {
+				
+				// Receive an ARP request
+				logger.info("Received an ARP request");
+	        	handleARPRequest(sw, pin, cntx);
+		 }
+			//Destination IP Address for each packet-in
+		 System.out.print("1 :: ");
+		 System.out.println(match.loadFromPacket(pin.getPacketData(), pin.getInPort()));
+		 int sip=match.getNetworkSource();	
+		 System.out.print("2 :: ");
+		 System.out.println(IPv4.fromIPv4Address(match.getNetworkDestination()));
+		 String s="";
+		 String[] ss= new String[100];
+		 if(eth.getEtherType() == Ethernet.TYPE_IPv4){
+			    IPv4 ip = (IPv4)eth.getPayload();        	
+			    if(match.getNetworkProtocol()==17 || match.getNetworkProtocol()==6){
+			          TCP tcp = (TCP)ip.getPayload();
+			          Data data = (Data)tcp.getPayload();
+			          byte [] bytes = data.getData();
+			          s = new String(bytes);
+			          System.out.println("$$$$$$$$$$$ New Packet Payload $$$$$$$$$$");
+			          System.out.println(s);
+			          ss=s.split("/");		
+			          System.out.println("type is  ");
+		              System.out.println(ss[0]);
+						  for(int i=1;i<ss.length;i++)
+						  {
+			               System.out.println("topic is  ");
+			               System.out.println(ss[i]);
+						  }
+			        }
+	   }
+	   route(sw, pin,eth,s,sip,z++);
+    
+	     return Command.CONTINUE;
+}
+
+	private void handleARPRequest(IOFSwitch sw, OFPacketIn pin,
+			FloodlightContext cntx) {
+		// TODO Auto-generated method stub
+		logger.debug("Handle ARP request");
+		Ethernet eth = IFloodlightProviderService.bcStore.get(cntx,
+				IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
+		if (! (eth.getPayload() instanceof ARP))
+			return;
+		ARP arpRequest = (ARP) eth.getPayload();
+		
+		// generate ARP reply
+		IPacket arpReply = new Ethernet()
+			.setSourceMACAddress(PubSub.LOAD_BALANCER_MAC)
+			.setDestinationMACAddress(eth.getSourceMACAddress())
+			.setEtherType(Ethernet.TYPE_ARP)
+			.setPriorityCode(eth.getPriorityCode())
+			.setPayload(
+				new ARP()
+				.setHardwareType(ARP.HW_TYPE_ETHERNET)
+				.setProtocolType(ARP.PROTO_TYPE_IP)
+				.setHardwareAddressLength((byte) 6)
+				.setProtocolAddressLength((byte) 4)
+				.setOpCode(ARP.OP_REPLY)
+				.setSenderHardwareAddress(PubSub.LOAD_BALANCER_MAC)
+				.setSenderProtocolAddress(PubSub.LOAD_BALANCER_IP)
+				.setTargetHardwareAddress(arpRequest.getSenderHardwareAddress())
+				.setTargetProtocolAddress(arpRequest.getSenderProtocolAddress()));
+		
+		sendARPReply(arpReply, sw, OFPort.OFPP_NONE.getValue(), pin.getInPort());
+		
+	}
+
+	private void sendARPReply(IPacket packet, IOFSwitch sw, short outPort,
+			short inPort) {
+		// TODO Auto-generated method stub
+		// Initialize a packet out
+				OFPacketOut po = (OFPacketOut) floodlightProvider.getOFMessageFactory()
+						.getMessage(OFType.PACKET_OUT);
+				po.setBufferId(OFPacketOut.BUFFER_ID_NONE);
+				po.setInPort(inPort);
+				
+				// Set output actions
+				List<OFAction> actions = new ArrayList<OFAction>();
+				actions.add(new OFActionOutput(outPort, (short) 0xffff));
+				po.setActions(actions);
+				po.setActionsLength((short) OFActionOutput.MINIMUM_LENGTH);
+				
+				// Set packet data and length
+				byte[] packetData = packet.serialize();
+				po.setPacketData(packetData);
+				po.setLength((short) (OFPacketOut.MINIMUM_LENGTH + po.getActionsLength() + packetData.length));
+				
+				// Send packet
+				try {
+					sw.write(po, null);
+					sw.flush();
+				} catch (IOException e) {
+					logger.error("Failure writing packet out", e);
+				}
+	}
+
+	private void route(IOFSwitch sw, OFPacketIn pin, Ethernet eth, String s, int sip,int a) {
+		// TODO Auto-generated method stub
+		   int flag=0;
+		   int[][] publishers=new int[100][100];
+	       int[][] subscribers=new int[100][100];
+		   String[] ss=s.split("/");
+	       if(ss[0]=="publish")
+	         {
+	    	   publish(sip,publishers,ss[1],a);
+	    	   flag=1;//store in publishers queue
+	         }
+	       else if(ss[0]=="subscribe")
+	         {
+	    	   subscribe(sip,subscribers,ss[1],a); //store in subscribers queue
+	           flag=1;
+	         }
+	       else
+	        {
+	    	   logger.info("Invalid function.Type <publish or subscribe>/<topic:Pictures/Videos/Music>"); //we dont care
+	    	   flag=0;
+	        }
+	       if(flag==1)
+	         { 
+	    	   int i,j,k,l;
+	           for(i=0,j=0;i < publishers.length || j < subscribers.length;j++,i++)   //checking the availability of subscribers and publishers
+	            {
+	        	   for(k=0,l=0;k<publishers[i].length || l<subscribers[j].length;k++,l++)
+	        	     {
+	    	           OFFlowMod rule = new OFFlowMod();
+	   		           rule.setType(OFType.FLOW_MOD); 			
+	   		           rule.setCommand(OFFlowMod.OFPFC_ADD);
+	   		   
+	   		        Publisher pub = getClass(publishers[i][k]);
+	   		           
+	   		           OFMatch match = new OFMatch()
+	   		               .setNetworkSource(publishers[i][k])
+			               .setNetworkDestination(subscribers[j][l])
+			               .setInputPort(pub.getPort())
+			               .setDataLayerSource(pub.getMAC());
+			              
+	   		     // no wildcards i.e, match exact match
+	   				match.setWildcards(~OFMatch.OFPFW_ALL);
+	   				rule.setMatch(match);
+	   		        
+	   			//Initialize list of actions
+	   				ArrayList<OFAction> actions = new ArrayList<OFAction>();	
+	   				
+	   			// Add action to re-write destination MAC to the MAC of the chosen server
+	   			    OFAction rewriteIP = new OFActionNetworkLayerDestination(subscribers[j][l]);
+	   				actions.add(rewriteIP);
+	   			
+	   			
+	   			//Get the class that has the ip of that particular subscriber
+	   				Publisher sub = getClass(subscribers[j][l]);
+	   				
+	   				
+	   			// Add action to output packet
+	   				OFAction outputTo = new OFActionOutput(sub.getPort());
+	   				actions.add(outputTo);	
+	   				
+	   			// Add actions to rule
+	   				rule.setActions(actions);
+	   				short actionsLength = (short)(OFActionDataLayerDestination.MINIMUM_LENGTH
+	   						+ OFActionNetworkLayerDestination.MINIMUM_LENGTH
+	   						+ OFActionOutput.MINIMUM_LENGTH);
+	   					
+	   			
+	   			// Specify the length of the rule structure
+	   				rule.setLength((short) (OFFlowMod.MINIMUM_LENGTH + actionsLength));
+	   				
+	   				logger.debug("Actions length="+ (rule.getLength() - OFFlowMod.MINIMUM_LENGTH));
+	   				
+	   				logger.debug("Install rule for forward direction for flow: " + rule);
+	   					
+	   				try {
+	   					sw.write(rule, null);
+	   				} catch (Exception e) {
+	   					e.printStackTrace();
+	   				}	
+	   				
+	    	        push(sw, pin, actions, actionsLength);
+	                }
+	             }
+    	     }
+        }
+	
+	
+	private Publisher getNextDest() {
+		// TODO Auto-generated method stub
+		
+		lastServer = (lastServer + 1) % PUB.length;
+		return PUB[lastServer];
+	}
+	
+	private Publisher getClass(int i) {
+		// TODO Auto-generated method stub
+		Publisher destin = getNextDest();
+		while(destin.ip != i)
+		 { 
+			destin=getNextDest();
+	     }
+		return destin;
+	}
+
+	private void push(IOFSwitch sw, OFPacketIn pin,
+			ArrayList<OFAction> actions, short actionsLength) {
+		// TODO Auto-generated method stub
+		
+	}
+
+	private void subscribe(int sip, int[][] subscribers, String s,int a) {
+		// TODO Auto-generated method stub
+		if(s=="Pictures")
+	       subscribers[0][a]=sip;
+	    else if(s=="Music")
+		   subscribers[1][a]=sip;
+	    else if(s=="Videos")
+		   subscribers[2][a]=sip;
+	    else
+	       System.out.println("Invalid format"); //the rest of the undefined topics
+	}
+
+
+	private void publish(int sip, int[][] publishers, String s,int a) {
+		// TODO Auto-generated method stub
+		if(s=="Pictures")
+	       publishers[0][a]=sip;
+	    else if(s=="Music")
+		   publishers[1][a]=sip;
+	    else if(s=="Videos")
+		   publishers[2][a]=sip;
+	    else
+		   System.out.println("Invalid format"); //the rest of the undefined topics	
+	}
+}
