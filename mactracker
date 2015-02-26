@@ -1,0 +1,168 @@
+package net.floodlightcontroller.mactracker;
+
+
+import java.util.Collection;
+import java.util.Map;
+
+import org.openflow.protocol.OFMatch;
+import org.openflow.protocol.OFMessage;
+import org.openflow.protocol.OFPacketIn;
+import org.openflow.protocol.OFType;
+
+import net.floodlightcontroller.core.FloodlightContext;
+import net.floodlightcontroller.core.IOFMessageListener;
+import net.floodlightcontroller.core.IOFSwitch;
+import net.floodlightcontroller.core.module.FloodlightModuleContext;
+import net.floodlightcontroller.core.module.FloodlightModuleException;
+import net.floodlightcontroller.core.module.IFloodlightModule;
+import net.floodlightcontroller.core.module.IFloodlightService;
+
+import net.floodlightcontroller.core.IFloodlightProviderService;
+import java.util.ArrayList;
+import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.Set;
+
+import net.floodlightcontroller.packet.Data;
+import net.floodlightcontroller.packet.Ethernet;
+import net.floodlightcontroller.packet.IPv4;
+import net.floodlightcontroller.packet.TCP;
+import net.floodlightcontroller.packet.UDP;
+
+//import org.openflow.util.HexString;
+//import org.restlet.resource.ClientResource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class MACTracker implements IOFMessageListener, IFloodlightModule {
+	
+	protected IFloodlightProviderService floodlightProvider;
+	protected Set<Long> macAddresses;
+	protected static Logger logger;
+
+	@Override
+	public String getName() {
+		return "mactracker";
+	}
+
+	@Override
+	public boolean isCallbackOrderingPrereq(OFType type, String name) {
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public boolean isCallbackOrderingPostreq(OFType type, String name) {
+		// TODO Auto-generated method stub
+		return false;
+	}
+
+	@Override
+	public Collection<Class<? extends IFloodlightService>> getModuleServices() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Map<Class<? extends IFloodlightService>, IFloodlightService> getServiceImpls() {
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Collection<Class<? extends IFloodlightService>> getModuleDependencies() {
+		Collection<Class<? extends IFloodlightService>> l =
+				new ArrayList<Class<? extends IFloodlightService>>();
+		l.add(IFloodlightProviderService.class);
+		return l;
+	}
+
+	@Override
+	public void init(FloodlightModuleContext context)
+			throws FloodlightModuleException {
+		floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
+	    macAddresses = new ConcurrentSkipListSet<Long>();
+	    logger = LoggerFactory.getLogger(MACTracker.class);
+
+	}
+
+	@Override
+	public void startUp(FloodlightModuleContext context) {
+		floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
+
+	}
+
+	@Override
+	public net.floodlightcontroller.core.IListener.Command receive(
+			IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
+		 Ethernet eth =
+	                IFloodlightProviderService.bcStore.get(cntx,
+	                                            IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
+		 //System.out.println("$URL is $");
+		 //ClientResource a= new ClientResource("10.0.0.1/pict/pub"); 
+		 //System.out.println(a.getReference().getPath());
+		 OFPacketIn pin = (OFPacketIn) msg;
+		 OFMatch match = new OFMatch();
+			
+			//Destination IP Address for each packet-in
+		 System.out.print("1");
+		 System.out.println(match.loadFromPacket(pin.getPacketData(), pin.getInPort()));
+			
+			System.out.print("2");
+			System.out.println(IPv4.fromIPv4Address(match.getNetworkDestination()));
+			System.out.println(match.getNetworkDestination());
+		    //System.out.println(match.loadFromPacket(packetData, inputPort));
+			//System.out.println(match.);
+		 String s="";
+		 if(eth.getEtherType() == Ethernet.TYPE_IPv4){
+			    IPv4 ip = (IPv4)eth.getPayload();        	
+			    if(match.getNetworkProtocol()==17 || match.getNetworkProtocol()==6){
+			          TCP tcp = (TCP)ip.getPayload();
+			          Data data = (Data)tcp.getPayload();
+			          byte [] bytes = data.getData();
+			          s = new String(bytes);
+			          System.out.println("$$$$$$$$$$$New Packet Payload $$$$$$$$$$");
+			          System.out.println(s);
+			          // String[] ss=s.split("/");						  
+						//  for(int i=0;i<ss.length;i++)
+						  //{
+			          //System.out.println("packet is ");
+			          //System.out.println(match.loadFromPacket(bytes,match.getInputPort()));
+						  //}	  
+			        }
+			  }
+	//	 parse(s);
+		
+		 //System.out.println(a[1]);
+		 
+		 /********Splitting of string****************************/
+	/*	 String[] ss=s.split(" ");
+		 String res=new String ("");
+		 String[] a=new String[100];
+		 int j=0;
+		// logger.info("$$$$$$$$$$$New Packet Payload {} {}$$$$$$$$$$",s,ss.length);
+		 //System.out.println(ss[]);
+	     for(int i=1;i<ss.length;i++)
+			  {
+			    //a=ss[i].split("//");
+			    
+			    //System.out.println(ss[i]);
+			    j=i;
+			    if(j==1)
+			    	break;
+			    //j++;
+			  }
+		res=ss[j];
+		System.out.println(res);
+		//System.out.println(a[0]);
+		//System.out.println(ss[0]);
+		 //System.out.println(ss.substring);
+	     Long sourceMACHash = Ethernet.toLong(eth.getSourceMACAddress());
+	     if (!macAddresses.contains(sourceMACHash)) {
+	            macAddresses.add(sourceMACHash);
+	           // logger.info("MAC Address: {} seen on switch: {}",
+	             //       HexString.toHexString(sourceMACHash),
+	               //     sw.getId());
+	       }*/
+	     return Command.CONTINUE;
+	}
+}
